@@ -151,6 +151,10 @@ file_descriptor :: proc(backend: ^Backend) -> i32 {
 	return xcb_get_file_descriptor(backend.connection)
 }
 
+has_pending :: proc(backend: ^Backend) -> bool {
+	return backend != nil && (backend.receive.phase != .Idle || len(backend.sends) > 0)
+}
+
 selection_atom :: proc(backend: ^Backend, selection: Selection) -> u32 {
 	if selection == .Primary do return ATOM_PRIMARY
 	return backend.atoms.clipboard

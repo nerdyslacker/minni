@@ -23,7 +23,7 @@ XCLIP_PID=$!
 
 ITEM_ID=
 for _ in $(seq 1 200); do
-	RESULT=$("$CLI" --socket "$SOCKET" --json list)
+	RESULT=$("$CLI" --socket "$SOCKET" --json search 'daemon clipboard round-trip')
 	ITEM_ID=$(printf '%s' "$RESULT" | python3 -c 'import json,sys; x=json.load(sys.stdin)["result"]["items"]; print(x[0]["id"] if x else "")')
 	[ -n "$ITEM_ID" ] && break
 	sleep 0.02

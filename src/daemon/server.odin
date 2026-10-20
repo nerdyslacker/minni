@@ -9,6 +9,7 @@ import "core:strings"
 import "core:sys/posix"
 import clipboard "../clipboard"
 import ipc "../ipc"
+import media "../media"
 import storage "../storage"
 import x11 "../x11"
 
@@ -143,8 +144,8 @@ serve_request :: proc(state: ^State, client: ^ipc.Client, payload: []byte) -> bo
 			return true
 		}
 		client.hello = true
-		capabilities := []string{"text", "image", "watch"}
-		if state.backend_ready do capabilities = []string{"x11", "text", "image", "watch"}
+		capabilities := []string{"text", "image", "preview", "export", "watch"}
+		if state.backend_ready do capabilities = []string{"x11", "text", "image", "preview", "export", "watch"}
 		result := Hello_Result{version = ipc.VERSION, capabilities = capabilities}
 		reply_ok(state, client, request.id, result)
 		return true
@@ -179,6 +180,42 @@ serve_request :: proc(state: ^State, client: ^ipc.Client, payload: []byte) -> bo
 		result := Item_Result{item = wire}
 		reply_ok(state, client, request.id, result)
 		storage.destroy_item(&item)
+	case "preview":
+		item, err := storage.get(state.store, request.args.item_id)
+		if err != .None {
+			storage_error(state, client, request.id, err)
+			return true
+		}
+		is_image := item.kind == "image"
+		storage.destroy_item(&item)
+		if !is_image {
+			reply_error(state, client, request.id, "BAD_REQUEST", "item is not an image")
+			return true
+		}
+		preview, preview_err := clipboard.ensure_preview(state.store, request.args.item_id, state.cache_dir)
+		if preview_err != .None {
+			reply_error(state, client, request.id, "INTERNAL", "cannot create image preview")
+			return true
+		}
+		result := Preview_Result{item_id = request.args.item_id, path = preview.path, width = preview.width, height = preview.height}
+		reply_ok(state, client, request.id, result)
+		media.destroy_preview(&preview)
+	case "export":
+		item, err := storage.get(state.store, request.args.item_id)
+		if err != .None {
+			storage_error(state, client, request.id, err)
+			return true
+		}
+		path, path_err := storage.payload_path(state.store, request.args.item_id)
+		if path_err != .None {
+			storage.destroy_item(&item)
+			storage_error(state, client, request.id, path_err)
+			return true
+		}
+		result := Export_Result{item_id = item.id, path = path, mime_type = item.mime_type, byte_length = item.byte_length}
+		reply_ok(state, client, request.id, result)
+		delete(path)
+		storage.destroy_item(&item)
 	case "copy":
 		if !state.backend_ready {
 			reply_error(state, client, request.id, "BACKEND_UNAVAILABLE", "X11 backend is unavailable")
@@ -200,7 +237,6 @@ serve_request :: proc(state: ^State, client: ^ipc.Client, payload: []byte) -> bo
 			}
 			return true
 		}
-		emit(state, "item_updated", Item_Id_Event_Data{item_id = request.args.item_id})
 		result := Item_Id_Result{item_id = request.args.item_id}
 		reply_ok(state, client, request.id, result)
 	case "pin", "unpin":
@@ -343,7 +379,9 @@ run :: proc(state: ^State, running: ^bool) {
 			append(&fds, posix.pollfd{fd = client.fd, events = events})
 			append(&clients, client)
 		}
-		result := posix.poll(raw_data(fds), posix.nfds_t(len(fds)), 100)
+		timeout := -1
+		if state.backend_ready && x11.has_pending(&state.backend) do timeout = 100
+		result := posix.poll(raw_data(fds), posix.nfds_t(len(fds)), i32(timeout))
 		if result < 0 && posix.errno() != .EINTR {
 			delete(fds)
 			delete(clients)
@@ -380,6 +418,7 @@ destroy :: proc(state: ^State) {
 	if state.listener >= 0 do posix.close(state.listener)
 	if len(state.socket_path) > 0 do _ = os.remove(state.socket_path)
 	delete(state.socket_path)
+	delete(state.cache_dir)
 	if state.backend_ready do x11.deinit(&state.backend)
 	storage.close(state.store)
 	state^ = {}

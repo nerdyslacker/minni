@@ -222,7 +222,7 @@ open :: proc(state_dir: string, config: Config) -> (^Store, Error_Code) {
 		return nil, err
 	}
 	if version > SCHEMA_VERSION {
-		set_error(store, "database schema is newer than this Minni build")
+		set_error(store, "database schema is newer than this minni build")
 		close(store)
 		return nil, .Unsupported_Schema
 	}

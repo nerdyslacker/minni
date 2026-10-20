@@ -12,13 +12,15 @@ import time
 daemon, cli, seed = sys.argv[1:4]
 root = tempfile.TemporaryDirectory(prefix="minni-ipc-")
 state = os.path.join(root.name, "state")
+cache = os.path.join(root.name, "cache")
 sock = os.path.join(root.name, "run", "minni.sock")
-subprocess.run([seed, state], check=True)
+asset = os.path.join(os.path.dirname(os.path.dirname(seed)), "assets", "minni.png")
+subprocess.run([seed, state, "-1", asset], check=True)
 
 
 def start():
     process = subprocess.Popen(
-        [daemon, "--no-x11", "--state-dir", state, "--socket", sock],
+        [daemon, "--no-x11", "--state-dir", state, "--cache-dir", cache, "--socket", sock],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -71,7 +73,22 @@ try:
     assert os.stat(sock).st_mode & 0o777 == 0o600
 
     status = subprocess.run([cli, "--socket", sock, "--json", "status"], check=True, text=True, capture_output=True)
-    assert json.loads(status.stdout)["result"]["item_count"] == 3
+    assert json.loads(status.stdout)["result"]["item_count"] == 4
+
+    listing = subprocess.run([cli, "--socket", sock, "--json", "list", "--limit", "10"], check=True, text=True, capture_output=True)
+    image = next(item for item in json.loads(listing.stdout)["result"]["items"] if item["kind"] == "image")
+    preview = subprocess.run([cli, "--socket", sock, "--json", "preview", image["id"]], check=True, text=True, capture_output=True)
+    preview_result = json.loads(preview.stdout)["result"]
+    assert preview_result["width"] > 0 and preview_result["height"] > 0
+    assert os.path.commonpath((cache, preview_result["path"])) == cache
+    assert os.stat(preview_result["path"]).st_mode & 0o777 == 0o600
+    exported_path = os.path.join(root.name, "exported.png")
+    exported = subprocess.run([cli, "--socket", sock, "--json", "export", image["id"], "--output", exported_path], check=True, text=True, capture_output=True)
+    assert json.loads(exported.stdout)["byte_length"] == os.path.getsize(asset)
+    with open(exported_path, "rb") as output, open(asset, "rb") as expected:
+        assert output.read() == expected.read()
+    refused = subprocess.run([cli, "--socket", sock, "export", image["id"], "--output", exported_path], text=True, capture_output=True)
+    assert refused.returncode == 1
 
     page = subprocess.run([cli, "--socket", sock, "--json", "list", "--limit", "1"], check=True, text=True, capture_output=True)
     first = json.loads(page.stdout)
@@ -98,6 +115,8 @@ try:
     beta = json.loads(search.stdout)["result"]["items"][0]
     shown = subprocess.run([cli, "--socket", sock, "--json", "show", beta["id"]], check=True, text=True, capture_output=True)
     assert json.loads(shown.stdout)["result"]["item"]["preview_text"] == "beta"
+    rejected_preview = subprocess.run([cli, "--socket", sock, "--json", "preview", beta["id"]], text=True, capture_output=True)
+    assert rejected_preview.returncode == 1 and json.loads(rejected_preview.stdout)["error"]["code"] == "BAD_REQUEST"
 
     paused = subprocess.run([cli, "--socket", sock, "--json", "pause"], check=True, text=True, capture_output=True)
     assert json.loads(paused.stdout)["result"]["paused"]
@@ -108,7 +127,7 @@ try:
     removed = subprocess.run([cli, "--socket", sock, "--json", "remove", beta["id"]], check=True, text=True, capture_output=True)
     assert json.loads(removed.stdout)["result"]["removed_count"] == 1
     cleared = subprocess.run([cli, "--socket", sock, "--json", "clear", "--unpinned"], check=True, text=True, capture_output=True)
-    assert json.loads(cleared.stdout)["result"]["removed_count"] == 2
+    assert json.loads(cleared.stdout)["result"]["removed_count"] == 3
 
     missing = subprocess.run([cli, "--socket", sock, "--json", "show", "0" * 32], text=True, capture_output=True)
     assert missing.returncode == 4
@@ -138,4 +157,4 @@ finally:
     stop(process)
     root.cleanup()
 
-print("IPC integration: 20 passed")
+print("IPC integration: 28 passed")

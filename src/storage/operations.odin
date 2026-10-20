@@ -133,9 +133,11 @@ enforce_retention :: proc(store: ^Store, protected_id: string, now: i64) -> Erro
 
 	if store.config.max_unpinned_items >= 0 {
 		statement, err := prepare(store, `DELETE FROM items WHERE id IN (
-SELECT id FROM items WHERE pinned=0 ORDER BY last_used_at DESC, id ASC LIMIT -1 OFFSET ?1)`) 
+SELECT id FROM items WHERE pinned=0
+ORDER BY (id=?2) DESC, last_used_at DESC, id ASC LIMIT -1 OFFSET ?1)`)
 		if err != .None do return err
 		if sqlite3_bind_int(statement, 1, i32(store.config.max_unpinned_items)) != SQLITE_OK ||
+		   bind_text(store, statement, 2, protected_id) != .None ||
 			sqlite3_step(statement) != SQLITE_DONE {
 			sqlite3_finalize(statement)
 			return set_database_error(store)
@@ -417,6 +419,26 @@ read_payload :: proc(store: ^Store, id: string) -> ([]byte, Error_Code) {
 		return nil, .Integrity
 	}
 	return data, .None
+}
+
+payload_path :: proc(store: ^Store, id: string) -> (string, Error_Code) {
+	statement, err := prepare(store, "SELECT content_hash FROM items WHERE id=?1")
+	if err != .None do return "", err
+	defer sqlite3_finalize(statement)
+	if err = bind_text(store, statement, 1, id); err != .None do return "", err
+	result := sqlite3_step(statement)
+	if result == SQLITE_DONE do return "", .Not_Found
+	if result != SQLITE_ROW do return "", set_database_error(store)
+	hash := column_string(statement, 0)
+	defer delete(hash)
+	path, path_err := blob_path(store, hash)
+	if path_err != .None do return "", path_err
+	info, stat_err := os.lstat(path, context.temp_allocator)
+	if stat_err != nil || info.type != .Regular {
+		delete(path)
+		return "", .Integrity
+	}
+	return path, .None
 }
 
 event_sequence :: proc(store: ^Store) -> (i64, Error_Code) {

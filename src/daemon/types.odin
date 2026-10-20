@@ -62,6 +62,20 @@ Subscribe_Result :: struct {
 	current_seq: i64  `json:"current_seq"`,
 }
 
+Preview_Result :: struct {
+	item_id: string `json:"item_id"`,
+	path:    string `json:"path"`,
+	width:   int    `json:"width"`,
+	height:  int    `json:"height"`,
+}
+
+Export_Result :: struct {
+	item_id:     string `json:"item_id"`,
+	path:        string `json:"path"`,
+	mime_type:   string `json:"mime_type"`,
+	byte_length: i64    `json:"byte_length"`,
+}
+
 Protocol_Error :: struct {
 	code:    string `json:"code"`,
 	message: string `json:"message"`,
@@ -123,6 +137,7 @@ State :: struct {
 	sequence:      i64,
 	listener:      posix.FD,
 	socket_path:   string,
+	cache_dir:     string,
 	clients:       [dynamic]^ipc.Client,
 	journal:       [dynamic]Journal_Event,
 }

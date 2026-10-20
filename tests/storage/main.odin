@@ -150,10 +150,20 @@ test_retention_and_clear :: proc() {
 	removed, clear_err = storage.clear(store, .All)
 	eq(clear_err, storage.Error_Code.None, "clear all")
 	eq(removed, 1, "clear all removes pin explicitly")
+	e, _, _ := storage.put(store, text_input("same-a", 5))
+	f, _, _ := storage.put(store, text_input("same-b", 5))
+	g, _, g_err := storage.put(store, text_input("same-c", 5))
+	eq(g_err, storage.Error_Code.None, "same-time capture survives retention")
+	newest, newest_err := storage.get(store, g.id)
+	eq(newest_err, storage.Error_Code.None, "protected capture is retained")
+	storage.destroy_item(&newest)
 	storage.destroy_item(&a)
 	storage.destroy_item(&b)
 	storage.destroy_item(&c)
 	storage.destroy_item(&d)
+	storage.destroy_item(&e)
+	storage.destroy_item(&f)
+	storage.destroy_item(&g)
 }
 
 test_pin_budget_policy :: proc() {

@@ -146,7 +146,7 @@ ensure_thumbnail :: proc(cache_dir, key: string, data: []byte, mime_type: string
 	output_width, output_height := thumbnail_size(info.width, info.height, limits_.thumbnail_edge)
 	if os.exists(path) {
 		file_info, stat_err := os.lstat(path, context.temp_allocator)
-		if stat_err != nil || file_info.type != .Regular {
+		if stat_err != nil || file_info.type != .Regular || os.chmod(path, os.perm(0o600)) != nil {
 			delete(reference)
 			delete(path)
 			return {}, .IO

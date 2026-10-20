@@ -1,0 +1,42 @@
+.TH MINNID 1 "October 2026" "minni" "User Commands"
+.SH NAME
+minnid \- X11 clipboard history daemon
+.SH SYNOPSIS
+.B minnid
+.RI [ --config " path" ]
+.RI [ --state-dir " path" ]
+.RI [ --cache-dir " path" ]
+.RI [ --socket " path" ]
+.RI [ --no-x11 ]
+.SH DESCRIPTION
+minnid captures X11 clipboard changes, stores bounded history, and serves local
+clients over a private Unix socket. It runs in the foreground for supervision.
+.SH OPTIONS
+.TP
+.BI --config " path"
+Load configuration from path. The default is $XDG_CONFIG_HOME/minni/config.
+.TP
+.BI --state-dir " path"
+Override durable storage location.
+.TP
+.BI --cache-dir " path"
+Override the disposable image-preview cache directory.
+.TP
+.BI --socket " path"
+Override the private IPC socket path.
+.TP
+.B --no-x11
+Run storage and IPC without the X11 backend.
+.TP
+.B --help
+Show command help.
+.SH FILES
+.I $XDG_CONFIG_HOME/minni/config
+.br
+.I $XDG_STATE_HOME/minni/
+.br
+.I $XDG_CACHE_HOME/minni/
+.br
+.I $XDG_RUNTIME_DIR/minni/minni.sock
+.SH LIMITATIONS
+Wayland is not supported. Run one clipboard manager at a time.

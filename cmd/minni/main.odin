@@ -19,8 +19,48 @@ Envelope :: struct {
 	error: Error_Value `json:"error"`,
 }
 
+Export_Result :: struct {
+	item_id:     string `json:"item_id"`,
+	path:        string `json:"path"`,
+	byte_length: i64    `json:"byte_length"`,
+}
+
+Export_Envelope :: struct {
+	ok:     bool          `json:"ok"`,
+	result: Export_Result `json:"result"`,
+	error:  Error_Value   `json:"error"`,
+}
+
+Export_Report :: struct {
+	item_id:     string `json:"item_id"`,
+	output:      string `json:"output"`,
+	byte_length: i64    `json:"byte_length"`,
+}
+
 usage :: proc() {
-	fmt.eprintln("usage: minni [--socket PATH] [--json] status|list|search|show|copy|pin|unpin|remove|clear|pause|resume|watch")
+	fmt.eprintln("usage: minni [--socket PATH] [--json] COMMAND [ARGS]")
+}
+
+help :: proc() {
+	fmt.println(`minni - control the minni clipboard daemon
+
+Usage: minni [--socket PATH] [--json] COMMAND [ARGS]
+
+Commands:
+  status
+  list [--limit N] [--cursor CURSOR] [--pinned]
+  search QUERY [list options]
+  show ID
+  preview ID
+  export ID --output PATH
+  copy ID [--selection clipboard|primary]
+  pin ID | unpin ID | remove ID
+  clear --unpinned|--all
+  pause | resume
+  watch
+
+Exit codes: 0 success, 2 usage, 3 daemon unavailable,
+4 not found, 5 limit or stale cursor, 1 other failure.`)
 }
 
 send_request :: proc(fd: posix.FD, request: ipc.Request) -> ([]byte, bool) {
@@ -119,12 +159,91 @@ watch :: proc(socket_path: string, json_output: bool) -> ! {
 	}
 }
 
+run_export :: proc(socket_path, item_id, output: string, json_output: bool) -> int {
+	fd := ipc.connect(socket_path)
+	if fd < 0 {
+		fmt.eprintln("minni: daemon unavailable")
+		return 3
+	}
+	defer posix.close(fd)
+	if !handshake(fd) {
+		fmt.eprintln("minni: protocol handshake failed")
+		return 1
+	}
+	response, ok := send_request(fd, ipc.Request{
+		v = ipc.VERSION,
+		id = "1",
+		op = "export",
+		args = {item_id = item_id},
+	})
+	if !ok {
+		fmt.eprintln("minni: connection closed")
+		return 3
+	}
+	defer delete(response)
+	exit_code := exit_for_response(response)
+	if exit_code != 0 {
+		fmt.println(string(response))
+		return exit_code
+	}
+	envelope: Export_Envelope
+	defer {
+		delete(envelope.result.item_id)
+		delete(envelope.result.path)
+		delete(envelope.error.code)
+	}
+	if json.unmarshal(response, &envelope, .JSON) != nil do return 1
+	data, read_err := os.read_entire_file(envelope.result.path, context.allocator)
+	if read_err != nil {
+		fmt.eprintln("minni: cannot read exported payload")
+		return 1
+	}
+	defer delete(data)
+	file, open_err := os.open(output, {.Write, .Create, .Excl}, os.perm(0o600))
+	if open_err != nil {
+		fmt.eprintln("minni: output exists or cannot be created")
+		return 1
+	}
+	complete := false
+	defer {
+		_ = os.close(file)
+		if !complete do _ = os.remove(output)
+	}
+	written := 0
+	for written < len(data) {
+		count, write_err := os.write(file, data[written:])
+		if write_err != nil || count <= 0 {
+			fmt.eprintln("minni: cannot write output")
+			return 1
+		}
+		written += count
+	}
+	if os.sync(file) != nil {
+		fmt.eprintln("minni: cannot sync output")
+		return 1
+	}
+	complete = true
+	report := Export_Report{item_id = envelope.result.item_id, output = output, byte_length = i64(len(data))}
+	if json_output {
+		encoded, marshal_err := json.marshal(report, {spec = .JSON})
+		if marshal_err != nil do return 1
+		fmt.println(string(encoded))
+		delete(encoded)
+	}
+	return 0
+}
+
 main :: proc() {
 	socket_path := ipc.default_socket_path()
 	json_output := false
 	arguments := os.args
 	index := 1
 	for index < len(arguments) {
+		if arguments[index] == "--help" || arguments[index] == "-h" {
+			help()
+			delete(socket_path)
+			os.exit(0)
+		}
 		if arguments[index] == "--json" {
 			json_output = true
 			index += 1
@@ -148,6 +267,15 @@ main :: proc() {
 	}
 	command := arguments[index]
 	index += 1
+	if command == "export" {
+		if index + 3 != len(arguments) || arguments[index + 1] != "--output" {
+			usage()
+			os.exit(2)
+		}
+		exit_code := run_export(socket_path, arguments[index], arguments[index + 2], json_output)
+		delete(socket_path)
+		os.exit(exit_code)
+	}
 	if command == "watch" {
 		if index != len(arguments) {
 			usage()
@@ -168,7 +296,7 @@ main :: proc() {
 			request.args.query = arguments[index]
 			valid = parse_common_options(arguments, index + 1, &request.args)
 		}
-	case "show", "pin", "unpin", "remove":
+	case "show", "preview", "pin", "unpin", "remove":
 		valid = index + 1 == len(arguments)
 		if valid do request.args.item_id = arguments[index]
 	case "copy":

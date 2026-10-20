@@ -1,0 +1,48 @@
+.TH MINNI 1 "October 2026" "minni" "User Commands"
+.SH NAME
+minni \- control the minni clipboard daemon
+.SH SYNOPSIS
+.B minni
+.RI [ --socket " path" ]
+.RI [ --json ]
+.I command
+.RI [ arguments ]
+.SH COMMANDS
+.TP
+.B status
+Show daemon, capture, and history state.
+.TP
+.B list
+List history. Accepts --limit, --cursor, and --pinned.
+.TP
+.BI search " query"
+Search text, labels, MIME types, and source applications.
+.TP
+.BI show " id"
+Show item metadata.
+.TP
+.BI preview " id"
+Create and return a private bounded image preview.
+.TP
+.BI export " id --output path"
+Export original item bytes without overwriting an existing file.
+.TP
+.BI copy " id"
+Restore an item to CLIPBOARD. Use --selection primary for PRIMARY.
+.TP
+.BI pin|unpin|remove " id"
+Mutate one stable item ID.
+.TP
+.B clear --unpinned|--all
+Clear the requested history scope.
+.TP
+.B pause|resume
+Control capture.
+.TP
+.B watch
+Print events and reconnect after daemon restarts.
+.SH EXIT STATUS
+0 succeeds; 2 is invalid usage; 3 means daemon unavailable; 4 means an item
+was not found; 5 is a limit or stale cursor; 1 is another failure.
+.SH LIMITATIONS
+Wayland is not supported.
