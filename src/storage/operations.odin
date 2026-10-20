@@ -419,6 +419,20 @@ read_payload :: proc(store: ^Store, id: string) -> ([]byte, Error_Code) {
 	return data, .None
 }
 
+event_sequence :: proc(store: ^Store) -> (i64, Error_Code) {
+	return query_integer(store, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='event_sequence'")
+}
+
+advance_event_sequence :: proc(store: ^Store) -> (i64, Error_Code) {
+	statement, err := prepare(store, `UPDATE metadata
+SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)
+WHERE key='event_sequence' RETURNING CAST(value AS INTEGER)`)
+	if err != .None do return 0, err
+	defer sqlite3_finalize(statement)
+	if sqlite3_step(statement) != SQLITE_ROW do return 0, set_database_error(store)
+	return sqlite3_column_int64(statement, 0), .None
+}
+
 integrity_check :: proc(store: ^Store) -> Error_Code {
 	statement, err := prepare(store, "PRAGMA integrity_check")
 	if err != .None do return err
