@@ -7,7 +7,7 @@ import "core:time"
 import "core:unicode/utf8"
 
 ITEM_COLUMNS :: `id, created_at, last_used_at, selection_source, mime_type, kind,
-byte_length, content_hash, pinned, label, preview_text, source_app`
+byte_length, content_hash, pinned, label, preview_text, thumbnail_ref, source_app`
 
 now_milliseconds :: proc() -> i64 {
 	return time.to_unix_nanoseconds(time.now()) / 1_000_000
@@ -55,7 +55,8 @@ item_from_statement :: proc(statement: ^SQLite_Stmt) -> Item {
 		pinned = sqlite3_column_int(statement, 8) != 0,
 		label = column_string(statement, 9),
 		preview_text = column_string(statement, 10),
-		source_app = column_string(statement, 11),
+		thumbnail_ref = column_string(statement, 11),
+		source_app = column_string(statement, 12),
 	}
 	hash := column_string(statement, 7)
 	item.content_hash = fmt.aprintf("sha256:%s", hash)
@@ -228,7 +229,9 @@ put :: proc(store: ^Store, input: Item_Input) -> (Item, Put_Result, Error_Code) 
 		id := column_string(statement, 0)
 		sqlite3_finalize(statement)
 		update, update_err := prepare(store, `UPDATE items SET last_used_at=?1,
-selection_source=?2, source_app=COALESCE(?3, source_app) WHERE id=?4`)
+selection_source=?2, source_app=COALESCE(?3, source_app),
+thumbnail_ref=CASE WHEN kind='image' THEN COALESCE(thumbnail_ref, content_hash || '.png') ELSE thumbnail_ref END
+WHERE id=?4`)
 		if update_err != .None {
 			delete(id)
 			return {}, {}, update_err
@@ -287,8 +290,8 @@ selection_source=?2, source_app=COALESCE(?3, source_app) WHERE id=?4`)
 	defer delete(preview)
 	insert, item_err := prepare(store, `INSERT INTO items(
 id, created_at, last_used_at, selection_source, mime_type, kind, byte_length,
-content_hash, label, preview_text, source_app)
-VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`)
+content_hash, label, preview_text, thumbnail_ref, source_app)
+VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`)
 	if item_err != .None do return {}, {}, item_err
 	item_err = bind_text(store, insert, 1, id)
 	sqlite3_bind_int64(insert, 2, created_at)
@@ -300,7 +303,10 @@ VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`)
 	if item_err == .None do item_err = bind_text(store, insert, 8, digest)
 	if item_err == .None do item_err = bind_optional_text(store, insert, 9, input.label)
 	if item_err == .None do item_err = bind_optional_text(store, insert, 10, preview)
-	if item_err == .None do item_err = bind_optional_text(store, insert, 11, input.source_app)
+	thumbnail_ref := ""
+	if input.kind == "image" do thumbnail_ref = fmt.tprintf("%s.png", digest)
+	if item_err == .None do item_err = bind_optional_text(store, insert, 11, thumbnail_ref)
+	if item_err == .None do item_err = bind_optional_text(store, insert, 12, input.source_app)
 	if item_err == .None && sqlite3_step(insert) != SQLITE_DONE do item_err = set_database_error(store)
 	sqlite3_finalize(insert)
 	if item_err != .None do return {}, {}, item_err

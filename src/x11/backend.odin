@@ -4,6 +4,7 @@ import "core:mem"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
+import media "../media"
 
 set_error :: proc(backend: ^Backend, message: string) {
 	delete(backend.last_error)
@@ -40,7 +41,8 @@ intern_atom :: proc(connection: ^Connection, name: string) -> (u32, bool) {
 init :: proc(backend: ^Backend, config := Config{}) -> bool {
 	backend^ = {}
 	backend.config = config
-	if backend.config.max_capture_bytes <= 0 do backend.config.max_capture_bytes = default_config().max_capture_bytes
+	if backend.config.max_text_bytes <= 0 do backend.config.max_text_bytes = default_config().max_text_bytes
+	if backend.config.max_image_bytes <= 0 do backend.config.max_image_bytes = default_config().max_image_bytes
 	if backend.config.max_pending_captures <= 0 do backend.config.max_pending_captures = default_config().max_pending_captures
 	if backend.config.transfer_timeout <= 0 do backend.config.transfer_timeout = default_config().transfer_timeout
 	if backend.config.incr_chunk_bytes <= 0 do backend.config.incr_chunk_bytes = default_config().incr_chunk_bytes
@@ -83,8 +85,8 @@ init :: proc(backend: ^Backend, config := Config{}) -> bool {
 	}
 	free_c(version)
 
-	names := [10]string{"CLIPBOARD", "TARGETS", "UTF8_STRING", "TEXT", "text/plain", "text/plain;charset=utf-8", "INCR", "TIMESTAMP", "MINNI_SELECTION_A", "MINNI_SELECTION_B"}
-	values := [10]^u32{&backend.atoms.clipboard, &backend.atoms.targets, &backend.atoms.utf8_string, &backend.atoms.text, &backend.atoms.text_plain, &backend.atoms.text_plain_utf8, &backend.atoms.incr, &backend.atoms.timestamp, &backend.atoms.property, &backend.atoms.property_alt}
+	names := [13]string{"CLIPBOARD", "TARGETS", "UTF8_STRING", "TEXT", "text/plain", "text/plain;charset=utf-8", "image/png", "image/jpeg", "text/uri-list", "INCR", "TIMESTAMP", "MINNI_SELECTION_A", "MINNI_SELECTION_B"}
+	values := [13]^u32{&backend.atoms.clipboard, &backend.atoms.targets, &backend.atoms.utf8_string, &backend.atoms.text, &backend.atoms.text_plain, &backend.atoms.text_plain_utf8, &backend.atoms.image_png, &backend.atoms.image_jpeg, &backend.atoms.uri_list, &backend.atoms.incr, &backend.atoms.timestamp, &backend.atoms.property, &backend.atoms.property_alt}
 	for name, index in names {
 		atom, ok := intern_atom(backend.connection, name)
 		if !ok {
@@ -279,13 +281,22 @@ read_property :: proc(backend: ^Backend, delete_after: bool, max_bytes: int) -> 
 choose_target :: proc(backend: ^Backend, data: []byte) -> u32 {
 	if len(data) % 4 != 0 do return 0
 	atoms := (cast([^]u32)raw_data(data))[:len(data) / 4]
-	preferences := [6]u32{backend.atoms.utf8_string, backend.atoms.text_plain_utf8, backend.atoms.text_plain, backend.atoms.text, ATOM_STRING, 0}
+	preferences := [8]u32{backend.atoms.image_png, backend.atoms.image_jpeg, backend.atoms.utf8_string, backend.atoms.text_plain_utf8, backend.atoms.text_plain, backend.atoms.text, ATOM_STRING, backend.atoms.uri_list}
 	for preferred in preferences {
 		for offered in atoms {
 			if preferred != 0 && offered == preferred do return preferred
 		}
 	}
 	return 0
+}
+
+target_is_image :: proc(backend: ^Backend, target: u32) -> bool {
+	return target == backend.atoms.image_png || target == backend.atoms.image_jpeg
+}
+
+target_limit :: proc(backend: ^Backend, target: u32) -> int {
+	if target_is_image(backend, target) do return backend.config.max_image_bytes
+	return backend.config.max_text_bytes
 }
 
 handle_selection_notify :: proc(backend: ^Backend, event: ^Selection_Notify_Event) {
@@ -318,18 +329,19 @@ handle_selection_notify :: proc(backend: ^Backend, event: ^Selection_Notify_Even
 		}
 		backend.receive.phase = .Data
 		backend.receive.target = target
+		backend.receive.limit = target_limit(backend, target)
 		backend.receive.started = time.tick_now()
 		_ = xcb_convert_selection_checked(backend.connection, backend.window, event.selection, target, backend.receive.property, event.time)
 		xcb_flush(backend.connection)
 	case .Data:
-		reply, data, ok := read_property(backend, false, backend.config.max_capture_bytes)
+		reply, data, ok := read_property(backend, false, backend.receive.limit)
 		if !ok {
 			set_error(backend, "selection payload exceeds its limit")
 			cancel_receive(backend)
 			return
 		}
 		if reply.type == backend.atoms.incr {
-			valid := reply.format == 32 && len(data) == 4 && int((cast(^u32)raw_data(data))^) <= backend.config.max_capture_bytes
+			valid := reply.format == 32 && len(data) == 4 && int((cast(^u32)raw_data(data))^) <= backend.receive.limit
 			free_c(reply)
 			delete(data)
 			if !valid {
@@ -365,7 +377,7 @@ handle_property_notify :: proc(backend: ^Backend, event: ^Property_Notify_Event)
 }
 
 receive_increment :: proc(backend: ^Backend) {
-	reply, data, ok := read_property(backend, true, backend.config.max_capture_bytes - len(backend.receive.data))
+	reply, data, ok := read_property(backend, true, backend.receive.limit - len(backend.receive.data))
 	if !ok {
 		set_error(backend, "invalid INCR chunk")
 		cancel_receive(backend)
@@ -380,7 +392,11 @@ receive_increment :: proc(backend: ^Backend) {
 		finish_capture(backend, typ, format, complete)
 		return
 	}
-	if format != 8 || (typ != backend.receive.target && typ != backend.atoms.utf8_string && typ != ATOM_STRING) || len(backend.receive.data) + len(data) > backend.config.max_capture_bytes {
+	valid_type := typ == backend.receive.target
+	if !target_is_image(backend, backend.receive.target) {
+		valid_type = valid_type || typ == backend.atoms.utf8_string || typ == ATOM_STRING
+	}
+	if format != 8 || !valid_type || len(backend.receive.data) + len(data) > backend.receive.limit {
 		delete(data)
 		cancel_receive(backend)
 		return
@@ -418,17 +434,35 @@ utf8_to_latin1 :: proc(data: []byte) -> ([]byte, bool) {
 finish_capture :: proc(backend: ^Backend, actual_type: u32, format: u8, data: []byte) {
 	defer cancel_receive(backend)
 	if format != 8 {
-		set_error(backend, "text selection did not use 8-bit data")
+		set_error(backend, "selection did not use 8-bit data")
 		delete(data)
 		return
 	}
-	if actual_type != backend.receive.target && actual_type != backend.atoms.utf8_string && actual_type != ATOM_STRING {
+	is_image := target_is_image(backend, backend.receive.target)
+	if actual_type != backend.receive.target && (is_image || (actual_type != backend.atoms.utf8_string && actual_type != ATOM_STRING)) {
 		set_error(backend, "selection returned an unexpected data type")
 		delete(data)
 		return
 	}
+	mime := "text/plain;charset=utf-8"
 	converted := data
-	if actual_type == ATOM_STRING {
+	if is_image {
+		mime = "image/png" if backend.receive.target == backend.atoms.image_png else "image/jpeg"
+		limits := media.default_limits()
+		limits.max_bytes = backend.config.max_image_bytes
+		if _, image_err := media.inspect(data, mime, limits); image_err != .None {
+			set_error(backend, "clipboard image failed validation")
+			delete(data)
+			return
+		}
+	} else if backend.receive.target == backend.atoms.uri_list {
+		mime = "text/uri-list"
+		if !utf8.valid_string(string(data)) {
+			set_error(backend, "URI selection is not valid UTF-8")
+			delete(data)
+			return
+		}
+	} else if actual_type == ATOM_STRING {
 		converted = latin1_to_utf8(data)
 		delete(data)
 	} else if !utf8.valid_string(string(data)) {
@@ -436,12 +470,11 @@ finish_capture :: proc(backend: ^Backend, actual_type: u32, format: u8, data: []
 		delete(data)
 		return
 	}
-	if len(converted) > backend.config.max_capture_bytes {
+	if len(converted) > backend.receive.limit {
 		delete(converted)
 		return
 	}
 
-	mime := "text/plain;charset=utf-8"
 	if len(backend.captures) > 0 {
 		last := &backend.captures[len(backend.captures) - 1]
 		if last.mime_type == mime && mem.compare(last.data, converted) == 0 {

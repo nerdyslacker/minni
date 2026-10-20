@@ -5,7 +5,8 @@ import "core:time"
 Selection :: enum { Clipboard, Primary }
 
 Config :: struct {
-	max_capture_bytes: int,
+	max_text_bytes: int,
+	max_image_bytes: int,
 	max_pending_captures: int,
 	transfer_timeout:  time.Duration,
 	incr_chunk_bytes:  int,
@@ -14,7 +15,8 @@ Config :: struct {
 
 default_config :: proc() -> Config {
 	return {
-		max_capture_bytes = 20 * 1024 * 1024,
+		max_text_bytes = 1024 * 1024,
+		max_image_bytes = 20 * 1024 * 1024,
 		max_pending_captures = 32,
 		transfer_timeout = 5 * time.Second,
 		incr_chunk_bytes = 64 * 1024,
@@ -36,6 +38,7 @@ destroy_capture :: proc(capture: ^Capture) {
 
 Atoms :: struct {
 	clipboard, targets, utf8_string, text, text_plain, text_plain_utf8: u32,
+	image_png, image_jpeg, uri_list: u32,
 	incr, timestamp, property, property_alt: u32,
 }
 
@@ -46,6 +49,7 @@ Receive :: struct {
 	selection: Selection,
 	selection_atom, owner, target: u32,
 	property: u32,
+	limit: int,
 	started: time.Tick,
 	data: [dynamic]byte,
 }

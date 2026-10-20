@@ -59,4 +59,54 @@ wait "$XCLIP_PID" 2>/dev/null || true
 
 "$DRIVER" self "$TEST_DIR/small" "$TEST_DIR/self-ready"
 
-echo 'X11 integration: 5 passed'
+magick -size 512x384 plasma:fractal PNG24:"$TEST_DIR/image.png"
+magick "$TEST_DIR/image.png" -quality 91 "$TEST_DIR/image.jpg"
+
+"$DRIVER" serve-image image/png "$TEST_DIR/image.png" "$TEST_DIR/png-serve-ready" &
+SERVE_PID=$!
+wait_ready "$TEST_DIR/png-serve-ready"
+xclip -selection clipboard -target image/png -out >"$TEST_DIR/png-restored"
+cmp "$TEST_DIR/image.png" "$TEST_DIR/png-restored"
+kill "$SERVE_PID" 2>/dev/null || true
+wait "$SERVE_PID" 2>/dev/null || true
+
+"$DRIVER" serve-image image/jpeg "$TEST_DIR/image.jpg" "$TEST_DIR/jpeg-serve-ready" &
+SERVE_PID=$!
+wait_ready "$TEST_DIR/jpeg-serve-ready"
+xclip -selection clipboard -target image/jpeg -out >"$TEST_DIR/jpeg-restored"
+cmp "$TEST_DIR/image.jpg" "$TEST_DIR/jpeg-restored"
+kill "$SERVE_PID" 2>/dev/null || true
+wait "$SERVE_PID" 2>/dev/null || true
+
+"$DRIVER" capture-image image/png "$TEST_DIR/png-captured" "$TEST_DIR/png-capture-ready" &
+CAPTURE_PID=$!
+wait_ready "$TEST_DIR/png-capture-ready"
+xclip -selection clipboard -target image/png -in <"$TEST_DIR/image.png" &
+XCLIP_PID=$!
+wait "$CAPTURE_PID"
+cmp "$TEST_DIR/image.png" "$TEST_DIR/png-captured"
+kill "$XCLIP_PID" 2>/dev/null || true
+wait "$XCLIP_PID" 2>/dev/null || true
+
+"$DRIVER" capture-image image/jpeg "$TEST_DIR/jpeg-captured" "$TEST_DIR/jpeg-capture-ready" &
+CAPTURE_PID=$!
+wait_ready "$TEST_DIR/jpeg-capture-ready"
+xclip -selection clipboard -target image/jpeg -in <"$TEST_DIR/image.jpg" &
+XCLIP_PID=$!
+wait "$CAPTURE_PID"
+cmp "$TEST_DIR/image.jpg" "$TEST_DIR/jpeg-captured"
+kill "$XCLIP_PID" 2>/dev/null || true
+wait "$XCLIP_PID" 2>/dev/null || true
+
+printf 'file:///tmp/picture.png\r\n' >"$TEST_DIR/uris"
+"$DRIVER" capture-image text/uri-list "$TEST_DIR/uris-captured" "$TEST_DIR/uris-capture-ready" &
+CAPTURE_PID=$!
+wait_ready "$TEST_DIR/uris-capture-ready"
+xclip -selection clipboard -target text/uri-list -in <"$TEST_DIR/uris" &
+XCLIP_PID=$!
+wait "$CAPTURE_PID"
+cmp "$TEST_DIR/uris" "$TEST_DIR/uris-captured"
+kill "$XCLIP_PID" 2>/dev/null || true
+wait "$XCLIP_PID" 2>/dev/null || true
+
+echo 'X11 integration: 10 passed'

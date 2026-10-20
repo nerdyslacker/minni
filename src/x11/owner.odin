@@ -4,15 +4,23 @@ import "core:mem"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
+import media "../media"
 
 owned_index :: proc(selection: Selection) -> int {
 	return int(selection)
 }
 
 claim :: proc(backend: ^Backend, selection: Selection, mime_type: string, data: []byte) -> bool {
-	if backend == nil || backend.connection == nil || len(data) > backend.config.max_capture_bytes do return false
-	if mime_type != "text/plain" && mime_type != "text/plain;charset=utf-8" do return false
-	if !utf8.valid_string(string(data)) do return false
+	if backend == nil || backend.connection == nil do return false
+	if mime_type == "image/png" || mime_type == "image/jpeg" {
+		if len(data) > backend.config.max_image_bytes do return false
+		limits := media.default_limits()
+		limits.max_bytes = backend.config.max_image_bytes
+		if _, err := media.inspect(data, mime_type, limits); err != .None do return false
+	} else {
+		if mime_type != "text/plain" && mime_type != "text/plain;charset=utf-8" && mime_type != "text/uri-list" do return false
+		if len(data) > backend.config.max_text_bytes || !utf8.valid_string(string(data)) do return false
+	}
 
 	index := owned_index(selection)
 	owned := &backend.owned[index]
@@ -102,19 +110,24 @@ send_selection_notify :: proc(backend: ^Backend, request: ^Selection_Request_Eve
 	xcb_flush(backend.connection)
 }
 
-supported_targets :: proc(backend: ^Backend) -> [7]u32 {
-	return {
-		backend.atoms.targets,
-		backend.atoms.timestamp,
-		backend.atoms.utf8_string,
-		backend.atoms.text,
-		backend.atoms.text_plain_utf8,
-		backend.atoms.text_plain,
-		ATOM_STRING,
+supported_targets :: proc(backend: ^Backend, owned: ^Owned) -> []u32 {
+	targets := make([dynamic]u32, 0, 7)
+	append(&targets, backend.atoms.targets, backend.atoms.timestamp)
+	switch owned.mime_type {
+	case "image/png": append(&targets, backend.atoms.image_png)
+	case "image/jpeg": append(&targets, backend.atoms.image_jpeg)
+	case "text/uri-list": append(&targets, backend.atoms.uri_list)
+	case:
+		append(&targets, backend.atoms.utf8_string, backend.atoms.text, backend.atoms.text_plain_utf8, backend.atoms.text_plain, ATOM_STRING)
 	}
+	return targets[:]
 }
 
 target_data :: proc(backend: ^Backend, owned: ^Owned, target: u32) -> ([]byte, u32, bool, bool) {
+	if owned.mime_type == "image/png" && target == backend.atoms.image_png do return owned.data, target, true, false
+	if owned.mime_type == "image/jpeg" && target == backend.atoms.image_jpeg do return owned.data, target, true, false
+	if owned.mime_type == "text/uri-list" && target == backend.atoms.uri_list do return owned.data, target, true, false
+	if owned.mime_type == "image/png" || owned.mime_type == "image/jpeg" || owned.mime_type == "text/uri-list" do return nil, 0, false, false
 	if target == ATOM_STRING {
 		data, ok := utf8_to_latin1(owned.data)
 		return data, ATOM_STRING, ok, true
@@ -141,7 +154,8 @@ handle_selection_request :: proc(backend: ^Backend, request: ^Selection_Request_
 	if property == ATOM_NONE do property = request.target
 
 	if request.target == backend.atoms.targets {
-		targets := supported_targets(backend)
+		targets := supported_targets(backend, owned)
+		defer delete(targets)
 		if change_property(backend, request.requestor, property, ATOM_ATOM, 32, len(targets), raw_data(targets[:])) {
 			send_selection_notify(backend, request, property)
 		} else {

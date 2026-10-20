@@ -61,6 +61,7 @@ Item :: struct {
 	pinned:           bool,
 	label:            string,
 	preview_text:     string,
+	thumbnail_ref:    string,
 	source_app:       string,
 }
 
@@ -82,6 +83,7 @@ destroy_item :: proc(item: ^Item) {
 	delete(item.content_hash)
 	delete(item.label)
 	delete(item.preview_text)
+	delete(item.thumbnail_ref)
 	delete(item.source_app)
 	item^ = {}
 }
