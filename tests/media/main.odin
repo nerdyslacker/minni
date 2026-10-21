@@ -48,7 +48,7 @@ main :: proc() {
 	}
 	defer { _ = os.remove_all(root); delete(root) }
 	png_path := fmt.aprintf("%s/input.png", root)
-	jpeg_path := fmt.aprintf("%s/input.jpg", root)
+	jpeg_path := fmt.aprintf("%s/input image.jpg", root)
 	defer { delete(png_path); delete(jpeg_path) }
 	ok(write_fixture(png_path, "image/png", 96, 48), "create PNG fixture")
 	ok(write_fixture(jpeg_path, "image/jpeg", 80, 40), "create JPEG fixture")
@@ -96,6 +96,36 @@ main :: proc() {
 		ok(ensure_err == .None && os.exists(stored_preview.path), "generate stored image preview")
 		media.destroy_preview(&stored_preview)
 		storage.destroy_item(&item)
+
+		jpeg_uri := fmt.aprintf("file://%s/input%%20image.jpg\r\n", root)
+		defer delete(jpeg_uri)
+		uri_item, _, uri_err := clipboard.persist_capture(store, x11.Capture{
+			mime_type = "text/uri-list",
+			data = transmute([]byte)jpeg_uri,
+		})
+		ok(uri_err == .None && uri_item.kind == "image" &&
+			uri_item.mime_type == "image/jpeg", "import copied image file")
+		storage.destroy_item(&uri_item)
+
+		path_item, _, path_err := clipboard.persist_capture(store, x11.Capture{
+			selection = .Clipboard,
+			mime_type = "text/plain;charset=utf-8",
+			data = transmute([]byte)png_path,
+		})
+		ok(path_err == .None && path_item.kind == "image" &&
+			path_item.mime_type == "image/png", "import copied image path")
+		storage.destroy_item(&path_item)
+
+		text_uri := fmt.aprintf("file://%s/input%%20image.jpg", root)
+		defer delete(text_uri)
+		text_uri_item, _, text_uri_err := clipboard.persist_capture(store, x11.Capture{
+			selection = .Clipboard,
+			mime_type = "text/plain;charset=utf-8",
+			data = transmute([]byte)text_uri,
+		})
+		ok(text_uri_err == .None && text_uri_item.kind == "image" &&
+			text_uri_item.mime_type == "image/jpeg", "import copied image text URI")
+		storage.destroy_item(&text_uri_item)
 		storage.close(store)
 	}
 

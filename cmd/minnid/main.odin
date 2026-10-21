@@ -132,14 +132,47 @@ main :: proc() {
 		fmt.eprintln("minnid: socket directory must be private (0700)")
 		os.exit(1)
 	}
+	lock_path, _ := filepath.join({socket_dir, "minnid.lock"})
+	defer delete(lock_path)
+	lock_cpath := strings.clone_to_cstring(lock_path)
+	defer delete(lock_cpath)
+	lock_fd := posix.open(lock_cpath, {.RDWR, .CREAT, .CLOEXEC}, posix.mode_t{.IRUSR, .IWUSR})
+	if lock_fd < 0 {
+		fmt.eprintln("minnid: cannot open session lock")
+		os.exit(1)
+	}
+	defer posix.close(lock_fd)
+	if posix.lockf(lock_fd, .TLOCK, 0) != .OK {
+		err := posix.errno()
+		if err == .EACCES || err == .EAGAIN do return
+		fmt.eprintln("minnid: cannot acquire session lock")
+		os.exit(1)
+	}
+	probe := ipc.connect(socket_path)
+	if probe >= 0 {
+		posix.close(probe)
+		return
+	}
+	listener := ipc.listen(socket_path)
+	if listener < 0 {
+		probe = ipc.connect(socket_path)
+		if probe >= 0 {
+			posix.close(probe)
+			return
+		}
+		fmt.eprintln("minnid: cannot listen on ", socket_path)
+		os.exit(1)
+	}
 	store, open_err := storage.open(state_dir, settings.storage)
 	if open_err != .None {
+		posix.close(listener)
+		_ = os.remove(socket_path)
 		fmt.eprintln("minnid: cannot open storage")
 		os.exit(1)
 	}
 	state := daemon.State{
 		store = store,
-		listener = -1,
+		listener = listener,
 		socket_path = strings.clone(socket_path),
 		cache_dir = strings.clone(cache_dir),
 	}
@@ -147,19 +180,16 @@ main :: proc() {
 	state.sequence, open_err = storage.advance_event_sequence(store)
 	if open_err != .None {
 		fmt.eprintln("minnid: cannot initialize event sequence")
+		daemon.destroy(&state)
 		os.exit(1)
 	}
 	if !no_x11 {
 		state.backend_ready = x11.init(&state.backend, settings.x11)
 		if !state.backend_ready {
-			fmt.eprintln("minnid: X11 unavailable; history IPC remains active")
-			x11.deinit(&state.backend)
+			fmt.eprintln("minnid: X11 backend is unavailable")
+			daemon.destroy(&state)
+			os.exit(1)
 		}
-	}
-	state.listener = ipc.listen(socket_path)
-	if state.listener < 0 {
-		fmt.eprintln("minnid: cannot listen on ", socket_path)
-		os.exit(1)
 	}
 	_ = posix.signal(.SIGINT, stop)
 	_ = posix.signal(.SIGTERM, stop)

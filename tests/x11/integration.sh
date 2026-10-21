@@ -29,6 +29,8 @@ SERVE_PID=$!
 wait_ready "$TEST_DIR/serve-ready"
 xclip -selection clipboard -out >"$TEST_DIR/restored"
 cmp "$TEST_DIR/small" "$TEST_DIR/restored"
+xsel --clipboard --output >"$TEST_DIR/restored-xsel"
+cmp "$TEST_DIR/small" "$TEST_DIR/restored-xsel"
 kill "$SERVE_PID" 2>/dev/null || true
 wait "$SERVE_PID" 2>/dev/null || true
 
@@ -109,4 +111,4 @@ cmp "$TEST_DIR/uris" "$TEST_DIR/uris-captured"
 kill "$XCLIP_PID" 2>/dev/null || true
 wait "$XCLIP_PID" 2>/dev/null || true
 
-echo 'X11 integration: 10 passed'
+echo 'X11 integration: 11 passed'

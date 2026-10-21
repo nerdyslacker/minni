@@ -47,6 +47,7 @@ help :: proc() {
 Usage: minni [--socket PATH] [--json] COMMAND [ARGS]
 
 Commands:
+  capabilities
   status
   list [--limit N] [--cursor CURSOR] [--pinned]
   search QUERY [list options]
@@ -57,7 +58,7 @@ Commands:
   pin ID | unpin ID | remove ID
   clear --unpinned|--all
   pause | resume
-  watch
+  watch [--no-reconnect]
 
 Exit codes: 0 success, 2 usage, 3 daemon unavailable,
 4 not found, 5 limit or stale cursor, 1 other failure.`)
@@ -83,6 +84,28 @@ handshake :: proc(fd: posix.FD) -> bool {
 	envelope: Envelope
 	defer delete(envelope.error.code)
 	return json.unmarshal(response, &envelope, .JSON) == nil && envelope.ok
+}
+
+run_capabilities :: proc(socket_path: string) -> int {
+	fd := ipc.connect(socket_path)
+	if fd < 0 {
+		fmt.eprintln("minni: daemon unavailable")
+		return 3
+	}
+	defer posix.close(fd)
+	response, ok := send_request(fd, ipc.Request{
+		v = ipc.VERSION,
+		id = "0",
+		op = "hello",
+		args = {min_version = ipc.VERSION, max_version = ipc.VERSION},
+	})
+	if !ok {
+		fmt.eprintln("minni: connection closed")
+		return 3
+	}
+	defer delete(response)
+	fmt.println(string(response))
+	return exit_for_response(response)
 }
 
 exit_for_response :: proc(response: []byte) -> int {
@@ -117,16 +140,18 @@ parse_common_options :: proc(arguments: []string, start: int, args: ^ipc.Args) -
 	return true
 }
 
-watch :: proc(socket_path: string, json_output: bool) -> ! {
+watch :: proc(socket_path: string, json_output, reconnect: bool) -> int {
 	last_sequence: i64
 	for {
 		fd := ipc.connect(socket_path)
 		if fd < 0 {
+			if !reconnect do return 3
 			time.sleep(250 * time.Millisecond)
 			continue
 		}
 		if !handshake(fd) {
 			posix.close(fd)
+			if !reconnect do return 1
 			time.sleep(250 * time.Millisecond)
 			continue
 		}
@@ -139,6 +164,7 @@ watch :: proc(socket_path: string, json_output: bool) -> ! {
 		if ok do delete(response)
 		if !ok {
 			posix.close(fd)
+			if !reconnect do return 3
 			time.sleep(250 * time.Millisecond)
 			continue
 		}
@@ -155,8 +181,10 @@ watch :: proc(socket_path: string, json_output: bool) -> ! {
 			_ = json_output
 		}
 		posix.close(fd)
+		if !reconnect do return 3
 		time.sleep(250 * time.Millisecond)
 	}
+	return 0
 }
 
 run_export :: proc(socket_path, item_id, output: string, json_output: bool) -> int {
@@ -267,6 +295,15 @@ main :: proc() {
 	}
 	command := arguments[index]
 	index += 1
+	if command == "capabilities" {
+		if index != len(arguments) {
+			usage()
+			os.exit(2)
+		}
+		exit_code := run_capabilities(socket_path)
+		delete(socket_path)
+		os.exit(exit_code)
+	}
 	if command == "export" {
 		if index + 3 != len(arguments) || arguments[index + 1] != "--output" {
 			usage()
@@ -277,11 +314,18 @@ main :: proc() {
 		os.exit(exit_code)
 	}
 	if command == "watch" {
+		reconnect := true
+		if index < len(arguments) && arguments[index] == "--no-reconnect" {
+			reconnect = false
+			index += 1
+		}
 		if index != len(arguments) {
 			usage()
 			os.exit(2)
 		}
-		watch(socket_path, json_output)
+		exit_code := watch(socket_path, json_output, reconnect)
+		delete(socket_path)
+		os.exit(exit_code)
 	}
 
 	request := ipc.Request{v = ipc.VERSION, id = "1", op = command}

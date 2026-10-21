@@ -67,10 +67,25 @@ def connect():
     return connection
 
 
+watcher = None
 process = start()
 try:
     assert os.stat(os.path.dirname(sock)).st_mode & 0o777 == 0o700
     assert os.stat(sock).st_mode & 0o777 == 0o600
+    assert os.stat(os.path.join(os.path.dirname(sock), "minnid.lock")).st_mode & 0o777 == 0o600
+
+    duplicate = subprocess.run(
+        [daemon, "--no-x11", "--state-dir", state, "--cache-dir", cache, "--socket", sock],
+        text=True,
+        capture_output=True,
+        timeout=3,
+    )
+    assert duplicate.returncode == 0
+    assert os.path.exists(sock)
+
+    capabilities = subprocess.run([cli, "--socket", sock, "--json", "capabilities"], check=True, text=True, capture_output=True)
+    hello = json.loads(capabilities.stdout)["result"]
+    assert hello["version"] == 1 and {"text", "image", "preview", "watch"} <= set(hello["capabilities"])
 
     status = subprocess.run([cli, "--socket", sock, "--json", "status"], check=True, text=True, capture_output=True)
     assert json.loads(status.stdout)["result"]["item_count"] == 4
@@ -142,8 +157,17 @@ try:
 
     final_status = subprocess.run([cli, "--socket", sock, "--json", "status"], check=True, text=True, capture_output=True)
     sequence = json.loads(final_status.stdout)["seq"]
+    watcher = subprocess.Popen(
+        [cli, "--socket", sock, "--json", "watch", "--no-reconnect"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(0.05)
+    assert watcher.poll() is None
 finally:
     stop(process)
+assert watcher.wait(timeout=3) == 3
 
 process = start()
 try:
@@ -157,4 +181,4 @@ finally:
     stop(process)
     root.cleanup()
 
-print("IPC integration: 28 passed")
+print("IPC integration: 33 passed")

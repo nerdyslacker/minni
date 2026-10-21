@@ -388,9 +388,18 @@ run :: proc(state: ^State, running: ^bool) {
 			break
 		}
 		if .IN in fds[0].revents do accept_clients(state)
-		if state.backend_ready && (result == 0 || .IN in fds[x_index].revents) do capture_pending(state)
+		if x_index >= 0 {
+			x_events := fds[x_index].revents
+			if .ERR in x_events || .HUP in x_events || .NVAL in x_events {
+				x11.deinit(&state.backend)
+				state.backend_ready = false
+				running^ = false
+			} else if result == 0 || .IN in x_events {
+				capture_pending(state)
+			}
+		}
 		base := 1
-		if state.backend_ready do base += 1
+		if x_index >= 0 do base += 1
 		for index := len(clients) - 1; index >= 0; index -= 1 {
 			pollfd := fds[base + index]
 			alive := !(.ERR in pollfd.revents || .HUP in pollfd.revents || .NVAL in pollfd.revents)

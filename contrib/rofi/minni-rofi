@@ -1,0 +1,52 @@
+#!/bin/sh
+
+set -eu
+
+minni_bin=${MINNI_BIN:-minni}
+rofi_bin=${ROFI_BIN:-rofi}
+limit=${MINNI_ROFI_LIMIT:-200}
+prompt=${MINNI_ROFI_PROMPT:-Clipboard}
+
+case "$limit" in
+    ''|*[!0-9]*)
+        printf 'minni-rofi: MINNI_ROFI_LIMIT must be 1-200\n' >&2
+        exit 2
+        ;;
+esac
+if [ "$limit" -lt 1 ] || [ "$limit" -gt 200 ]; then
+    printf 'minni-rofi: MINNI_ROFI_LIMIT must be 1-200\n' >&2
+    exit 2
+fi
+
+command -v "$minni_bin" >/dev/null 2>&1 || {
+    printf 'minni-rofi: minni is not installed\n' >&2
+    exit 127
+}
+command -v "$rofi_bin" >/dev/null 2>&1 || {
+    printf 'minni-rofi: rofi is not installed\n' >&2
+    exit 127
+}
+command -v jq >/dev/null 2>&1 || {
+    printf 'minni-rofi: jq is not installed\n' >&2
+    exit 127
+}
+
+payload=$("$minni_bin" --json list --limit "$limit") || exit $?
+rows=$(printf '%s\n' "$payload" | jq -r '
+    .result.items[] |
+    (if .kind == "image" then "Image · " + .mime_type
+     elif .kind == "uri_list" then "Files · " + (.preview_text // "")
+     else (.preview_text // "") end) as $preview |
+    (if .pinned then "★" else " " end) + "  " +
+    ($preview | gsub("[\\r\\n\\t]+"; " ") |
+        if length > 160 then .[:157] + "…" else . end)
+')
+
+[ -n "$rows" ] || exit 0
+selected=$(printf '%s\n' "$rows" | "$rofi_bin" -dmenu -i -p "$prompt" -format i) || exit 0
+case "$selected" in ''|*[!0-9]*) exit 0 ;; esac
+
+item_id=$(printf '%s\n' "$payload" |
+    jq -r --argjson index "$selected" '.result.items[$index].id // empty')
+[ -n "$item_id" ] || exit 1
+exec "$minni_bin" copy "$item_id"

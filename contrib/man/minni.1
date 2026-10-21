@@ -9,6 +9,9 @@ minni \- control the minni clipboard daemon
 .RI [ arguments ]
 .SH COMMANDS
 .TP
+.B capabilities
+Show the negotiated protocol version and daemon capabilities.
+.TP
 .B status
 Show daemon, capture, and history state.
 .TP
@@ -39,8 +42,10 @@ Clear the requested history scope.
 .B pause|resume
 Control capture.
 .TP
-.B watch
-Print events and reconnect after daemon restarts.
+.B watch [--no-reconnect]
+Print events. By default the command reconnects after daemon restarts;
+.B --no-reconnect
+exits when the connection closes.
 .SH EXIT STATUS
 0 succeeds; 2 is invalid usage; 3 means daemon unavailable; 4 means an item
 was not found; 5 is a limit or stale cursor; 1 is another failure.

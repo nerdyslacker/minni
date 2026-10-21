@@ -6,7 +6,7 @@ BINDIR ?= $(PREFIX)/bin
 MANDIR ?= $(PREFIX)/share/man
 DATADIR ?= $(PREFIX)/share/minni
 
-.PHONY: all check test test-ipc test-ipc-x11 test-hardening test-release test-x11 install uninstall clean
+.PHONY: all check test test-ipc test-ipc-x11 test-hardening test-release test-rofi test-x11 install uninstall clean
 
 all: build/minnid build/minni
 
@@ -40,6 +40,9 @@ test-hardening: build/minnid build/minni build/ipc-seed
 test-release: build/minnid build/minni
 	python3 tests/release/benchmark.py ./build/minnid ./build/minni
 
+test-rofi:
+	./tests/rofi/integration.sh
+
 build/minnid: cmd/minnid/*.odin src/config/*.odin src/daemon/*.odin src/ipc/*.odin src/storage/*.odin src/x11/*.odin src/clipboard/*.odin src/media/*.odin
 	mkdir -p build
 	$(ODIN) build cmd/minnid -out:$@ $(ODIN_FLAGS)
@@ -59,6 +62,7 @@ build/x11-test: tests/x11/main.odin src/x11/*.odin
 install: all
 	install -Dm755 build/minnid $(DESTDIR)$(BINDIR)/minnid
 	install -Dm755 build/minni $(DESTDIR)$(BINDIR)/minni
+	install -Dm755 contrib/rofi/minni-rofi $(DESTDIR)$(BINDIR)/minni-rofi
 	install -Dm644 contrib/man/minnid.1 $(DESTDIR)$(MANDIR)/man1/minnid.1
 	install -Dm644 contrib/man/minni.1 $(DESTDIR)$(MANDIR)/man1/minni.1
 	install -Dm644 contrib/examples/minni.conf $(DESTDIR)$(DATADIR)/examples/minni.conf
@@ -67,7 +71,7 @@ install: all
 	install -Dm755 contrib/xinit/minnid.sh $(DESTDIR)$(DATADIR)/xinit/minnid.sh
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/minnid $(DESTDIR)$(BINDIR)/minni
+	rm -f $(DESTDIR)$(BINDIR)/minnid $(DESTDIR)$(BINDIR)/minni $(DESTDIR)$(BINDIR)/minni-rofi
 	rm -f $(DESTDIR)$(MANDIR)/man1/minnid.1 $(DESTDIR)$(MANDIR)/man1/minni.1
 	rm -rf $(DESTDIR)$(DATADIR)
 
